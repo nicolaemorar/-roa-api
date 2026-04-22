@@ -465,4 +465,57 @@ app.post('/api/montaj/poze/sync-bulk', async (req, res) => {
     })
   } catch (error) {
     await client.query('ROLLBACK')
-    console
+    console.error('POST /api/montaj/poze/sync-bulk error:', error)
+    return res.status(500).json({
+      ok: false,
+      error: 'Failed to sync bulk photos',
+      details: error.message,
+    })
+  } finally {
+    client.release()
+  }
+})
+
+app.get('/api/montaj/judete', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT *
+      FROM v_financiar_stalpi_judet
+      ORDER BY cod_judet
+    `)
+
+    res.json(result.rows)
+  } catch (error) {
+    console.error('GET /api/montaj/judete error:', error)
+    res.status(500).json({
+      error: 'Failed to fetch montaj dashboard',
+    })
+  }
+})
+
+app.get('/api/montaj/stalpi/:cod_judet', async (req, res) => {
+  const { cod_judet } = req.params
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT *
+      FROM v_stalpi_operational
+      WHERE cod_judet = $1
+      ORDER BY montat DESC, cod_stalp
+      `,
+      [cod_judet]
+    )
+
+    res.json(result.rows)
+  } catch (error) {
+    console.error('GET /api/montaj/stalpi/:cod_judet error:', error)
+    res.status(500).json({
+      error: 'Failed to fetch stalpi',
+    })
+  }
+})
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`ROA API running on port ${port}`)
+})
