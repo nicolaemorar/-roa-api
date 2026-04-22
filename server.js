@@ -337,6 +337,149 @@ app.post('/api/montaj/poze/sync-bulk', async (req, res) => {
   const client = await pool.connect()
 
   try {
+    const rawCoduri = [...new Set(items.map((x) => x?.cod_stalp).filter(Boolean))]
+
+    const existingResult = await client.query(
+      `
+      SELECT cod_stalp
+      FROM montaj_stalpi
+      WHERE cod_stalp = ANY($1)
+      `,
+      [rawCoduri]
+    )
+
+    const existingSet = new Set(existingResult.rows.map((r) => r.cod_stalp))
+
+    const validItems = items.filter(
+      (item) => item?.cod_stalp && item?.drive_file_url && existingSet.has(item.cod_stalp)
+    )
+
+    const skippedItems = items.filter(
+      (item) => !item?.cod_stalp || !item?.drive_file_url || !existingSet.has(item.cod_stalp)
+    )
+
+    const skippedCoduri = [...new Set(skippedItems.map((x) => x?.cod_stalp).filter(Boolean))]
+
+    await client.query('BEGIN')
+
+    for (const item of validItems) {
+      const {
+        cod_stalp,
+        drive_file_id,
+        drive_file_url,
+        drive_folder_url,
+        filename,
+        uploaded_at,
+        lat_exif,
+        long_exif,
+      } = item || {}
+
+      await client.query(
+        `
+        INSERT INTO montaj_stalpi_poze (
+          cod_stalp,
+          drive_file_id,
+          drive_file_url,
+          drive_folder_url,
+          filename,
+          uploaded_at,
+          lat_exif,
+          long_exif
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT DO NOTHING
+        `,
+        [
+          cod_stalp,
+          drive_file_id || null,
+          drive_file_url,
+          drive_folder_url || null,
+          filename || null,
+          uploaded_at || null,
+          lat_exif || null,
+          long_exif || null,
+        ]
+      )
+    }
+
+    const coduriValide = [...new Set(validItems.map((x) => x.cod_stalp).filter(Boolean))]
+
+    for (const cod_stalp of coduriValide) {
+      await client.query(
+        `
+        UPDATE montaj_stalpi ms
+        SET
+            nr_poze = src.nr_poze,
+            montat = CASE
+                WHEN src.nr_poze >= 2 THEN TRUE
+                ELSE FALSE
+            END,
+            status_montaj = CASE
+                WHEN src.nr_poze >= 2 THEN 'montat'
+                WHEN src.nr_poze = 1 THEN 'in_verificare'
+                ELSE 'nemontat'
+            END,
+            data_confirmare = CASE
+                WHEN src.nr_poze >= 2 THEN src.ultima_poza_at
+                ELSE ms.data_confirmare
+            END,
+            drive_folder_url = src.drive_folder_url,
+            ultima_poza_url = src.ultima_poza_url,
+            ultima_poza_at = src.ultima_poza_at,
+            lat_confirmat = COALESCE(src.lat_exif, ms.lat_confirmat),
+            long_confirmat = COALESCE(src.long_exif, ms.long_confirmat),
+            sursa_confirmare = CASE
+                WHEN src.nr_poze >= 2 THEN 'drive_foto'
+                ELSE ms.sursa_confirmare
+            END,
+            updated_at = NOW()
+        FROM (
+            SELECT
+                cod_stalp,
+                COUNT(*) AS nr_poze,
+                MAX(uploaded_at) AS ultima_poza_at,
+                MAX(drive_file_url) AS ultima_poza_url,
+                MAX(drive_folder_url) AS drive_folder_url,
+                MAX(lat_exif) AS lat_exif,
+                MAX(long_exif) AS long_exif
+            FROM montaj_stalpi_poze
+            WHERE cod_stalp = $1
+            GROUP BY cod_stalp
+        ) src
+        WHERE src.cod_stalp = ms.cod_stalp
+        `,
+        [cod_stalp]
+      )
+    }
+
+    await client.query('COMMIT')
+
+    return res.json({
+      ok: true,
+      total_items: items.length,
+      total_valid_items: validItems.length,
+      total_skipped_items: skippedItems.length,
+      total_stalpi_actualizati: coduriValide.length,
+      skipped_cod_stalp: skippedCoduri.slice(0, 50),
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    console.error('POST /api/montaj/poze/sync-bulk error:', error)
+    return res.status(500).json({
+      ok: false,
+      error: 'Failed to sync bulk photos',
+      details: error.message,
+    })
+  } finally {
+    client.release()
+  }
+})
+    })
+  }
+
+  const client = await pool.connect()
+
+  try {
     await client.query('BEGIN')
 
     for (const item of items) {
