@@ -652,6 +652,35 @@ app.get('/api/montaj/stalpi/:cod_judet', async (req, res) => {
   }
 })
 
+app.get('/api/montaj/judete-summary', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        vmj.cod_judet,
+        vmj.nume_judet,
+        vmj.stalpi_eligibili,
+        vmj.stalpi_montati,
+        vmj.stalpi_ramasi,
+        vmj.stalpi_in_verificare,
+        vmj.procent_montat,
+        vfj.venit_total,
+        vfj.marja_estimativa,
+        vfj.marja_la_zi
+      FROM v_montaj_judet_executiv vmj
+      LEFT JOIN v_financiar_stalpi_judet vfj
+        ON vfj.cod_judet = vmj.cod_judet
+      ORDER BY vmj.cod_judet
+    `)
+
+    res.json(result.rows)
+  } catch (error) {
+    console.error('GET /api/montaj/judete-summary error:', error)
+    res.status(500).json({
+      error: 'Failed to fetch montaj county summary',
+    })
+  }
+})
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`ROA API running on port ${port}`)
 })
