@@ -71,6 +71,8 @@ app.get('/api/harta/judete', async (req, res) => {
         f.diferenta_venit_cost,
         f.situatie_decontare_rute,
 
+        l.google_earth_url,
+
         COALESCE(
           ARRAY_AGG(DISTINCT r.cod_ruta) FILTER (WHERE r.cod_ruta IS NOT NULL),
           ARRAY[]::text[]
@@ -83,6 +85,8 @@ app.get('/api/harta/judete', async (req, res) => {
         ON c.cod_judet = d.cod_judet
       LEFT JOIN v_financiar_judet_executiv f
         ON f.cod_judet = d.cod_judet
+      LEFT JOIN judete_linkuri l
+        ON l.cod_judet = d.cod_judet
       LEFT JOIN v_dashboard_ruta_judet_52 r
         ON r.cod_judet = d.cod_judet
 
@@ -116,7 +120,8 @@ app.get('/api/harta/judete', async (req, res) => {
         f.nr_obiective,
         f.venit_total,
         f.diferenta_venit_cost,
-        f.situatie_decontare_rute
+        f.situatie_decontare_rute,
+        l.google_earth_url
 
       ORDER BY d.total_puncte DESC, d.cod_judet
     `)
@@ -154,7 +159,8 @@ app.get('/api/harta/judete/:cod_judet', async (req, res) => {
         f.nr_obiective,
         f.venit_total,
         f.diferenta_venit_cost,
-        f.situatie_decontare_rute
+        f.situatie_decontare_rute,
+        l.google_earth_url
       FROM v_dashboard_judet_52 d
       LEFT JOIN v_dashboard_avize_judet_executiv a
         ON a.cod_judet = d.cod_judet
@@ -162,6 +168,8 @@ app.get('/api/harta/judete/:cod_judet', async (req, res) => {
         ON c.cod_judet = d.cod_judet
       LEFT JOIN v_financiar_judet_executiv f
         ON f.cod_judet = d.cod_judet
+      LEFT JOIN judete_linkuri l
+        ON l.cod_judet = d.cod_judet
       WHERE d.cod_judet = $1
       `,
       [cod_judet]
@@ -534,7 +542,7 @@ app.post('/api/montaj/progres/sync-bulk', async (req, res) => {
 
     if (value.includes('_')) return value
 
-    const match = value.match(/^(R\d+)(.+)$/i)
+    const match = value.match(/^(R\\d+)(.+)$/i)
     if (!match) return value
 
     const ruta = match[1].toUpperCase()
@@ -547,9 +555,9 @@ app.post('/api/montaj/progres/sync-bulk', async (req, res) => {
     const s = String(value).trim()
     if (!s) return null
 
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s
 
-    const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
+    const m = s.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})$/)
     if (m) {
       const dd = m[1].padStart(2, '0')
       const mm = m[2].padStart(2, '0')
@@ -681,6 +689,7 @@ app.get('/api/rute/summary', async (req, res) => {
     })
   }
 })
+
 app.get('/api/montaj/judete', async (req, res) => {
   try {
     const result = await pool.query(`
