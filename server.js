@@ -69,7 +69,12 @@ app.get('/api/harta/judete', async (req, res) => {
         f.nr_obiective,
         f.venit_total,
         f.diferenta_venit_cost,
-        f.situatie_decontare_rute
+        f.situatie_decontare_rute,
+
+        COALESCE(
+          ARRAY_AGG(DISTINCT r.cod_ruta) FILTER (WHERE r.cod_ruta IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS rute
 
       FROM v_dashboard_judet_52 d
       LEFT JOIN v_dashboard_avize_judet_executiv a
@@ -78,6 +83,41 @@ app.get('/api/harta/judete', async (req, res) => {
         ON c.cod_judet = d.cod_judet
       LEFT JOIN v_financiar_judet_executiv f
         ON f.cod_judet = d.cod_judet
+      LEFT JOIN v_dashboard_ruta_judet_52 r
+        ON r.cod_judet = d.cod_judet
+
+      GROUP BY
+        d.cod_judet,
+        d.nume_judet,
+        d.total_puncte,
+        d.puncte_de_inceput,
+        d.puncte_in_avizare,
+        d.puncte_eliminate_igpr,
+        d.total_t17,
+        d.total_pv_uat,
+        d.puncte_eligibile_montaj,
+        d.puncte_montate,
+        d.puncte_ramase_montaj,
+        d.procent_in_avizare,
+        d.procent_eliminat_igpr,
+        a.dr_igpr_status,
+        a.ipj_status,
+        a.ipj_sig_circ_status,
+        a.cnair_status,
+        a.cj_status,
+        a.uat_total,
+        a.uat_cu_aviz,
+        a.uat_cu_cerere,
+        a.uat_cu_clarificari,
+        a.uat_nesolicitate,
+        c.cost_materiale,
+        c.cost_manopera,
+        c.cost_total,
+        f.nr_obiective,
+        f.venit_total,
+        f.diferenta_venit_cost,
+        f.situatie_decontare_rute
+
       ORDER BY d.total_puncte DESC, d.cod_judet
     `)
 
@@ -612,6 +652,35 @@ app.post('/api/montaj/progres/sync-bulk', async (req, res) => {
   }
 })
 
+app.get('/api/rute/summary', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        UPPER(TRIM(rj.cod_ruta)) AS cod_ruta,
+        MAX(rj.nume_ruta) AS nume_ruta,
+        COUNT(DISTINCT rj.cod_judet) AS judete_total,
+        COUNT(DISTINCT CASE WHEN COALESCE(m.procent_montat, 0) >= 100 THEN rj.cod_judet END) AS judete_finalizate,
+        COUNT(DISTINCT CASE WHEN COALESCE(m.procent_montat, 0) < 100 THEN rj.cod_judet END) AS judete_in_lucru,
+        ARRAY_AGG(DISTINCT rj.cod_judet ORDER BY rj.cod_judet) AS judete,
+        COALESCE(MAX(ro.nr_obiective_ruta), 0) AS nr_obiective_ruta,
+        COALESCE(MAX(ro.nr_obiective_ruta), 0) * 42000::numeric(14,2) AS valoare_ruta
+      FROM v_dashboard_ruta_judet_52 rj
+      LEFT JOIN v_montaj_judet_executiv m
+        ON m.cod_judet = rj.cod_judet
+      LEFT JOIN rute_obiective_roa ro
+        ON UPPER(TRIM(ro.cod_ruta)) = UPPER(TRIM(rj.cod_ruta))
+      GROUP BY UPPER(TRIM(rj.cod_ruta))
+      ORDER BY UPPER(TRIM(rj.cod_ruta))
+    `)
+
+    res.json(result.rows)
+  } catch (error) {
+    console.error('GET /api/rute/summary error:', error)
+    res.status(500).json({
+      error: 'Failed to fetch routes summary',
+    })
+  }
+})
 app.get('/api/montaj/judete', async (req, res) => {
   try {
     const result = await pool.query(`
