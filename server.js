@@ -542,7 +542,7 @@ app.post('/api/montaj/progres/sync-bulk', async (req, res) => {
 
     if (value.includes('_')) return value
 
-    const match = value.match(/^(R\\d+)(.+)$/i)
+    const match = value.match(/^(R\d+)(.+)$/i)
     if (!match) return value
 
     const ruta = match[1].toUpperCase()
@@ -555,9 +555,9 @@ app.post('/api/montaj/progres/sync-bulk', async (req, res) => {
     const s = String(value).trim()
     if (!s) return null
 
-    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
 
-    const m = s.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})$/)
+    const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
     if (m) {
       const dd = m[1].padStart(2, '0')
       const mm = m[2].padStart(2, '0')
@@ -663,22 +663,79 @@ app.post('/api/montaj/progres/sync-bulk', async (req, res) => {
 app.get('/api/rute/summary', async (req, res) => {
   try {
     const result = await pool.query(`
+      WITH ruta_judete AS (
+        SELECT
+          UPPER(TRIM(rj.cod_ruta)) AS cod_ruta,
+          MAX(rj.nume_ruta) AS nume_ruta,
+          ARRAY_AGG(DISTINCT rj.cod_judet ORDER BY rj.cod_judet) AS judete,
+          COUNT(DISTINCT rj.cod_judet) AS judete_total
+        FROM v_dashboard_ruta_judet_52 rj
+        GROUP BY UPPER(TRIM(rj.cod_ruta))
+      ),
+      ruta_status AS (
+        SELECT
+          UPPER(TRIM(rj.cod_ruta)) AS cod_ruta,
+          COUNT(DISTINCT CASE WHEN COALESCE(m.procent_montat, 0) >= 100 THEN rj.cod_judet END) AS judete_finalizate,
+          COUNT(DISTINCT CASE WHEN COALESCE(m.procent_montat, 0) < 100 THEN rj.cod_judet END) AS judete_in_lucru
+        FROM v_dashboard_ruta_judet_52 rj
+        LEFT JOIN v_montaj_judet_executiv m
+          ON m.cod_judet = rj.cod_judet
+        GROUP BY UPPER(TRIM(rj.cod_ruta))
+      ),
+      ruta_valoare AS (
+        SELECT
+          UPPER(TRIM(ro.cod_ruta)) AS cod_ruta,
+          COALESCE(MAX(ro.nr_obiective_ruta), 0) AS nr_obiective_ruta,
+          COALESCE(MAX(ro.nr_obiective_ruta), 0) * 42000::numeric(14,2) AS valoare_ruta
+        FROM rute_obiective_roa ro
+        GROUP BY UPPER(TRIM(ro.cod_ruta))
+      ),
+      ruta_cheltuiala AS (
+        SELECT
+          UPPER(TRIM(vcp.cod_ruta)) AS cod_ruta,
+          COALESCE(SUM(vcp.cost_materiale), 0)::numeric(14,2) AS cheltuiala_materiale_ruta,
+          COALESCE(SUM(vcp.cost_manopera), 0)::numeric(14,2) AS cheltuiala_manopera_ruta,
+          COALESCE(SUM(vcp.cost_total), 0)::numeric(14,2) AS cheltuiala_ruta
+        FROM v_cost_standard_punct vcp
+        GROUP BY UPPER(TRIM(vcp.cod_ruta))
+      ),
+      judete_din_ruta_cost AS (
+        SELECT
+          rj.cod_ruta,
+          COALESCE(SUM(vcj.cost_materiale), 0)::numeric(14,2) AS cheltuiala_materiale_judete_din_ruta,
+          COALESCE(SUM(vcj.cost_manopera), 0)::numeric(14,2) AS cheltuiala_manopera_judete_din_ruta,
+          COALESCE(SUM(vcj.cost_total), 0)::numeric(14,2) AS cheltuiala_totala_judete_din_ruta
+        FROM ruta_judete rj
+        CROSS JOIN LATERAL unnest(rj.judete) AS j(cod_judet)
+        LEFT JOIN v_cost_standard_judet vcj
+          ON vcj.cod_judet = j.cod_judet
+        GROUP BY rj.cod_ruta
+      )
       SELECT
-        UPPER(TRIM(rj.cod_ruta)) AS cod_ruta,
-        MAX(rj.nume_ruta) AS nume_ruta,
-        COUNT(DISTINCT rj.cod_judet) AS judete_total,
-        COUNT(DISTINCT CASE WHEN COALESCE(m.procent_montat, 0) >= 100 THEN rj.cod_judet END) AS judete_finalizate,
-        COUNT(DISTINCT CASE WHEN COALESCE(m.procent_montat, 0) < 100 THEN rj.cod_judet END) AS judete_in_lucru,
-        ARRAY_AGG(DISTINCT rj.cod_judet ORDER BY rj.cod_judet) AS judete,
-        COALESCE(MAX(ro.nr_obiective_ruta), 0) AS nr_obiective_ruta,
-        COALESCE(MAX(ro.nr_obiective_ruta), 0) * 42000::numeric(14,2) AS valoare_ruta
-      FROM v_dashboard_ruta_judet_52 rj
-      LEFT JOIN v_montaj_judet_executiv m
-        ON m.cod_judet = rj.cod_judet
-      LEFT JOIN rute_obiective_roa ro
-        ON UPPER(TRIM(ro.cod_ruta)) = UPPER(TRIM(rj.cod_ruta))
-      GROUP BY UPPER(TRIM(rj.cod_ruta))
-      ORDER BY UPPER(TRIM(rj.cod_ruta))
+        rj.cod_ruta,
+        rj.nume_ruta,
+        rj.judete_total,
+        COALESCE(rs.judete_finalizate, 0) AS judete_finalizate,
+        COALESCE(rs.judete_in_lucru, 0) AS judete_in_lucru,
+        rj.judete,
+        COALESCE(rv.nr_obiective_ruta, 0) AS nr_obiective_ruta,
+        COALESCE(rv.valoare_ruta, 0)::numeric(14,2) AS valoare_ruta,
+        COALESCE(rc.cheltuiala_materiale_ruta, 0)::numeric(14,2) AS cheltuiala_materiale_ruta,
+        COALESCE(rc.cheltuiala_manopera_ruta, 0)::numeric(14,2) AS cheltuiala_manopera_ruta,
+        COALESCE(rc.cheltuiala_ruta, 0)::numeric(14,2) AS cheltuiala_ruta,
+        COALESCE(jc.cheltuiala_materiale_judete_din_ruta, 0)::numeric(14,2) AS cheltuiala_materiale_judete_din_ruta,
+        COALESCE(jc.cheltuiala_manopera_judete_din_ruta, 0)::numeric(14,2) AS cheltuiala_manopera_judete_din_ruta,
+        COALESCE(jc.cheltuiala_totala_judete_din_ruta, 0)::numeric(14,2) AS cheltuiala_totala_judete_din_ruta
+      FROM ruta_judete rj
+      LEFT JOIN ruta_status rs
+        ON rs.cod_ruta = rj.cod_ruta
+      LEFT JOIN ruta_valoare rv
+        ON rv.cod_ruta = rj.cod_ruta
+      LEFT JOIN ruta_cheltuiala rc
+        ON rc.cod_ruta = rj.cod_ruta
+      LEFT JOIN judete_din_ruta_cost jc
+        ON jc.cod_ruta = rj.cod_ruta
+      ORDER BY rj.cod_ruta
     `)
 
     res.json(result.rows)
